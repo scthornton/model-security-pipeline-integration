@@ -1,0 +1,82 @@
+name: Prisma AIRS Model Security Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_url:
+        description: 'Hugging Face Model URL (e.g., https://huggingface.co/bert-base-uncased)'
+        required: true
+      security_profile_id:
+        description: 'Prisma AIRS Security Group UUID'
+        required: true
+      fail_on_severity:
+        description: 'Comma-separated severities that trigger failure (e.g., CRITICAL,HIGH,MEDIUM)'
+        required: false
+        default: 'CRITICAL,HIGH' 
+
+jobs:
+  model_security_scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # Prevent hung jobs on large models
+
+    # --- SHARED ENVIRONMENT VARIABLES (JOB LEVEL) ---
+    # These are available to ALL steps, including the install script and the python script.
+    env:
+      MODEL_SECURITY_API_ENDPOINT: ${{ vars.MODEL_SECURITY_API_ENDPOINT || 'https://api.sase.paloaltonetworks.com/aims' }}
+      MODEL_SECURITY_CLIENT_ID: ${{ vars.MODEL_SECURITY_CLIENT_ID }}
+      MODEL_SECURITY_CLIENT_SECRET: ${{ secrets.MODEL_SECURITY_CLIENT_SECRET }}
+      TSG_ID: ${{ vars.TSG_ID }}
+      # Required for some versions of the SDK to find the auth server
+      MODEL_SECURITY_TOKEN_ENDPOINT: https://auth.apps.paloaltonetworks.com/oauth2/access_token
+      # Pass fail_on_severity to Python script
+      FAIL_ON_SEVERITY: ${{ inputs.fail_on_severity }}
+
+    steps:
+      - name: 📦 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 🛠️ Install Dependencies (Dynamic Auth)
+        run: |
+          # 1. Install jq (needed to parse the token response)
+          sudo apt-get install -y jq
+
+          # 2. Make the script executable
+          chmod +x getPYPIurl.sh
+
+          # 3. Run the script to get the secret download URL
+          echo "Authenticating to fetch PyPI URL..."
+          PIP_INDEX_LINK=$(./getPYPIurl.sh)
+
+          # 4. Verify we got a link
+          if [ -z "$PIP_INDEX_LINK" ]; then
+            echo "::error::Failed to retrieve PyPI URL. Check your secrets."
+            exit 1
+          fi
+
+          # 5. Install the client using the dynamic URL
+          echo "Installing model-security-client and dependencies..."
+          pip install --upgrade pip
+
+          # Install model-security-client from private PyPI
+          pip install model-security-client --extra-index-url "$PIP_INDEX_LINK"
+
+          # Install additional dependencies for retry logic
+          pip install tenacity
+
+      - name: 🛡️ Run Prisma AIRS Scan
+        run: |
+          python model_scan.py \
+            --model-path "${{ inputs.model_url }}" \
+            --security-group-id "${{ inputs.security_profile_id }}"
+
+      - name: 📄 Upload Scan Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-scan-report
+          path: model_scan_report.json
