@@ -199,8 +199,19 @@ def evaluate_scan_outcome(
     """
     policy_violated = False
 
-    # Check 1: Validate high-level scan outcome
-    outcome_str = str(result.eval_outcome).upper()
+    # Check 1: Validate high-level scan outcome.
+    # The SDK exposes eval_outcome as a Python enum (EvalOutcome.ALLOWED /
+    # EvalOutcome.BLOCKED). str(enum) returns "EVALOUTCOME.ALLOWED" which
+    # would never match the bare "ALLOWED" we expect. Read the value from
+    # the serialized dict instead, which model_dump() flattens to the bare
+    # string. Fall back to enum normalization if the dict key is missing.
+    outcome_str = (
+        str(data_dict.get("eval_outcome", "")).upper()
+        or str(getattr(result.eval_outcome, "value", result.eval_outcome)).upper()
+    )
+    # Trim any "EVALOUTCOME." prefix that slips through (defensive only).
+    if "." in outcome_str:
+        outcome_str = outcome_str.rsplit(".", 1)[-1]
     print(f"\n🏁 Scan Status: {outcome_str}")
 
     if outcome_str not in ALLOWED_OUTCOMES:
