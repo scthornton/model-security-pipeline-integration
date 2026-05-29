@@ -148,7 +148,7 @@ def test_constants():
     """Test that constants are properly defined."""
     print("\nTesting constants...")
 
-    assert ALLOWED_OUTCOMES == {"PASS", "CLEAN", "SUCCESS"}
+    assert ALLOWED_OUTCOMES == {"ALLOWED"}
     print(f"  ✅ ALLOWED_OUTCOMES: {ALLOWED_OUTCOMES}")
 
     assert DEFAULT_FAIL_SEVERITIES == "CRITICAL,HIGH"
