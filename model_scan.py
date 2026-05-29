@@ -12,7 +12,11 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from model_security_client.api import ModelSecurityAPIClient
 
 # Constants for policy enforcement
-ALLOWED_OUTCOMES: Set[str] = {"PASS", "CLEAN", "SUCCESS"}
+# The PANW model-security-client SDK returns eval_outcome as "ALLOWED" or
+# "BLOCKED" only. Earlier example scripts and pre-GA documentation used
+# values like "PASS", "CLEAN", or "SUCCESS"; those are no longer correct.
+# Reference: https://docs.paloaltonetworks.com/ai-runtime-security/ai-model-security
+ALLOWED_OUTCOMES: Set[str] = {"ALLOWED"}
 DEFAULT_FAIL_SEVERITIES: str = "CRITICAL,HIGH"
 
 # Exit codes
@@ -195,12 +199,23 @@ def evaluate_scan_outcome(
     """
     policy_violated = False
 
-    # Check 1: Validate high-level scan outcome
-    outcome_str = str(result.eval_outcome).upper()
+    # Check 1: Validate high-level scan outcome.
+    # The SDK exposes eval_outcome as a Python enum (EvalOutcome.ALLOWED /
+    # EvalOutcome.BLOCKED). str(enum) returns "EVALOUTCOME.ALLOWED" which
+    # would never match the bare "ALLOWED" we expect. Read the value from
+    # the serialized dict instead, which model_dump() flattens to the bare
+    # string. Fall back to enum normalization if the dict key is missing.
+    outcome_str = (
+        str(data_dict.get("eval_outcome", "")).upper()
+        or str(getattr(result.eval_outcome, "value", result.eval_outcome)).upper()
+    )
+    # Trim any "EVALOUTCOME." prefix that slips through (defensive only).
+    if "." in outcome_str:
+        outcome_str = outcome_str.rsplit(".", 1)[-1]
     print(f"\n🏁 Scan Status: {outcome_str}")
 
     if outcome_str not in ALLOWED_OUTCOMES:
-        print(f"⚠️  VIOLATION: Outcome '{outcome_str}' not in allowed set: {ALLOWED_OUTCOMES}")
+        print(f"⚠️  VIOLATION: eval_outcome is '{outcome_str}' (model BLOCKED by security policy)")
         policy_violated = True
 
     # Check 2: Deep inspection of individual findings
